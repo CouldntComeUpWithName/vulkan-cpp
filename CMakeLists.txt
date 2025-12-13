@@ -24,7 +24,6 @@ endif()
 if(MSVC)
   add_compile_options(/MP /W4 /EHsc- /GR-)
 else()
-  # add_compile_options(-ftime-trace -Ofast -std=c++23 -S)
   add_compile_options(-Wall -fno-rtti -fno-exceptions -ftime-trace -Wextra -Wpedantic) # -mllvm -unroll-threshold=10000
 endif()
 
@@ -39,6 +38,7 @@ PUBLIC
   <cstdint>
   <memory>
   <span>
+  <set>
   <cstring>
   <source_location>
   <glm/glm.hpp>

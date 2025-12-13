@@ -1,9 +1,14 @@
 #include "def.hpp"
 #include "logs.hpp"
 #include "validation_layers.hpp"
+#include <glm/glm.hpp>
+
+#include<set>
+
+using WindowHandle = GLFWwindow*;
 
 struct Window {
-  GLFWwindow* handle;
+  WindowHandle handle;
   std::string title;
   u32 width;
   u32 height;
@@ -38,7 +43,7 @@ static auto find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface) -
     {
       indices.present_family = i;
     }
-
+    
     if(queue_family.queueFlags & VK_QUEUE_GRAPHICS_BIT)
     {
       indices.graphics_family = i;
@@ -69,7 +74,7 @@ public:
     extensions.resize(extension_count);
 
     vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, extensions.data());
-
+    
     u32 counter{};
     for(const VkExtensionProperties& extension : extensions) 
     {
@@ -82,16 +87,17 @@ public:
     log_info("Window {} created", main_window_.title);
     
     init_vk();
+
     create_surface();
     pick_physical_device();
     create_logical_device();
   }
 
   void run() {
-    while(!::glfwWindowShouldClose(main_window().handle)) 
+    while(!glfwWindowShouldClose(main_window().handle)) 
     {
-      ::glfwPollEvents();
-      ::glfwSwapBuffers(main_window().handle);
+      glfwPollEvents();
+      glfwSwapBuffers(main_window().handle);
     }
   }
   
@@ -102,7 +108,7 @@ public:
     vkDestroySurfaceKHR(vk_instance_, surface_, nullptr);
     vkDestroyDevice(device_, nullptr);
     vkDestroyInstance(vk_instance_, nullptr);
-    
+
     glfwDestroyWindow(main_window_.handle);
     glfwTerminate();
   }
@@ -129,10 +135,13 @@ private:
     layers_ = std::vector<const char*>{
       "VK_LAYER_KHRONOS_validation"
     };
+    device_extensions_ = std::vector {
+      VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    };
     
     if(!vk::check_validation_layer_support(layers_)) 
     {
-      std::terminate();  
+      std::terminate();
     }
 
     VkApplicationInfo app_info {
@@ -159,16 +168,16 @@ private:
     VkDebugUtilsMessengerCreateInfoEXT dbg_create_info {
       .sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
       .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT 
-                         | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT 
-                         | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-      .messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT 
-                         | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT 
-                         | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+                          | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT 
+                          | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+      .messageType     =  VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT 
+                          | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT 
+                          | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
       .pfnUserCallback = &vk::debug_callback
     };
     
     create_info.pNext = &dbg_create_info;
-    
+
     VkResult result = ::vkCreateInstance(&create_info, nullptr, &vk_instance_);
     
     if (::vkCreateInstance(&create_info, nullptr, &vk_instance_) != VK_SUCCESS)
@@ -209,7 +218,7 @@ private:
 
     std::vector<VkPhysicalDevice> devices(device_count);
     vkEnumeratePhysicalDevices(vk_instance_, &device_count, devices.data());
-
+    
     for(VkPhysicalDevice device : devices)
     {
       if(is_device_suitable(device)) 
@@ -228,39 +237,89 @@ private:
       log_fatal("Failed to find a suitable GPU!");
     }
   }
+  
+  bool check_device_extension_support(VkPhysicalDevice phys_device) {
+    u32 extension_count{};
+    vkEnumerateDeviceExtensionProperties(phys_device, nullptr, &extension_count, nullptr);
+    assert(extension_count);
+
+    std::vector<VkExtensionProperties> available_extensions;
+    available_extensions.resize(extension_count);
+    vkEnumerateDeviceExtensionProperties(phys_device, nullptr, &extension_count, available_extensions.data());
+    
+    for(const std::string_view extension : device_extensions_)
+    { 
+      auto pred = [extension](const VkExtensionProperties& available) { 
+        return extension == available.extensionName; 
+      };
+
+      if(std::find_if(available_extensions.begin(), available_extensions.end(), pred) == available_extensions.end())
+      {
+        return false;
+      }
+    }
+    return true;
+  }
 
   bool is_device_suitable(VkPhysicalDevice device) {
-    VkPhysicalDeviceProperties props;
-    VkPhysicalDeviceFeatures features;
+    // VkPhysicalDeviceProperties props;
+    // VkPhysicalDeviceFeatures features;
     
-    vkGetPhysicalDeviceProperties(device, &props);
-    vkGetPhysicalDeviceFeatures(device, &features);
-    
-    log_info("Found Physical Device: {}", props.deviceName);
+    // std::vector<const char*> device_extensions {
+    //   VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    // };
+
+    // vkGetPhysicalDeviceProperties(device, &props);
+    // vkGetPhysicalDeviceFeatures(device, &features);
+    // log_info("Found Physical Device: {}", props.deviceName);
     
     QueueFamilyIndices indices = find_queue_families(device, surface_);
 
-    return props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU 
-      && features.geometryShader && indices.graphics_family;
+    return indices.is_complete() && check_device_extension_support(device);
+
+    // return props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU 
+    //   && features.geometryShader && indices.graphics_family;
   }
 
   void create_logical_device() {
     QueueFamilyIndices indices = find_queue_families(phys_device_, surface_);
 
+    if(!indices.is_complete())
+    {
+      log_fatal("QueueFamilyIndices is not complete");
+    }
+
+    std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
+    
+    std::set<u32> unique_queue_families = { indices.graphics_family.value(), indices.present_family.value() };
     float queue_priority = 1.f;
-    VkDeviceQueueCreateInfo queue_create_info {
-      .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-      .queueFamilyIndex = indices.graphics_family.value(),
-      .queueCount       = 1u,
-      .pQueuePriorities = &queue_priority
-    };
+
+    for(u32 qfamily : unique_queue_families)
+    {
+      queue_create_infos.emplace_back(
+        VkDeviceQueueCreateInfo {
+          .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+          .queueFamilyIndex = qfamily,
+          .queueCount = 1,
+          .pQueuePriorities = &queue_priority,
+        }
+      );
+    }
+
+    // float queue_priority = 1.f;
+    // VkDeviceQueueCreateInfo queue_create_info {
+    //   .sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+    //   .queueFamilyIndex = indices.graphics_family.value(),
+    //   .queueCount       = 1u,
+    //   .pQueuePriorities = &queue_priority
+    // };
     
     VkPhysicalDeviceFeatures features {};
     
-    VkDeviceCreateInfo create_info{
+    VkDeviceCreateInfo create_info {
       .sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-      .queueCreateInfoCount    = 1u,
-      .pQueueCreateInfos       = &queue_create_info,
+      .queueCreateInfoCount    = u32(queue_create_infos.size()),
+      .pQueueCreateInfos       = queue_create_infos.data(),
       .enabledLayerCount       = u32(layers_.size()),
       .ppEnabledLayerNames     = layers_.data(),
       .pEnabledFeatures        = &features,
@@ -273,6 +332,11 @@ private:
     log_info("Logical device created");
 
     vkGetDeviceQueue(device_, indices.graphics_family.value(), 0, &vk_queue_);
+    vkGetDeviceQueue(device_, indices.present_family.value(), 0/* might change to 1 */, &vk_present_queue_); // wha if unique_queue_families.size() > 0 ?
+  }
+
+  void create_present_queue() {
+    //TODO: implement
   }
 
 private:
@@ -284,6 +348,7 @@ private:
   VkQueue vk_present_queue_ = {};
   VkSurfaceKHR surface_ = {};
   std::vector<const char*> layers_;
+  std::vector<const char*> device_extensions_;
   Window main_window_;
 };
 
